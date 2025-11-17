@@ -6,6 +6,8 @@ npm install
 
 php artisan key:generate --ansi
 
+php artisan migrate:fresh --seed
+
 npm run dev
 
  ./vendor/laravel/sail/runtimes/8.4
