@@ -573,9 +573,18 @@ class ContractController extends Controller
         foreach ($contracts as $contract) {
             foreach ($contract->workersContracts as $workerContract) {
 
-                $success = filter_var($request->input('success-' . $workerContract->id), FILTER_VALIDATE_BOOLEAN);
+                $evaluationResult = $request->input('evaluation_result-' . $workerContract->id);
+
+                // Validate evaluation result - abort if invalid
+                if (!in_array($evaluationResult, ['na', 'pa', 'a', 'la'])) {
+                    return back()
+                        ->withErrors(['evaluation_result-' . $workerContract->id => __('Invalid evaluation result')])
+                        ->withInput();
+                }
+
                 $comment = null;
-                if (! $success) {
+                // Require comment for failed or partially acquired evaluations
+                if (in_array($evaluationResult, ['na', 'pa'])) {
                     $commentAttributeName = 'comment-' . $workerContract->id;
                     $comment = $request->input($commentAttributeName);
                     if (empty(trim($comment))) {
@@ -584,7 +593,8 @@ class ContractController extends Controller
                             ->withInput();
                     }
                 }
-                if ($workerContract->evaluate($success, $comment)) {
+
+                if ($workerContract->evaluate($evaluationResult, $comment)) {
                     $updated++;
                 }
             }
@@ -703,7 +713,7 @@ class ContractController extends Controller
 
     private function finalizeEvaluationAttachments(WorkerContract $workerContract): void
     {
-        foreach ($workerContract->evaluationAttachments as $attachment) {
+        foreach ($workerContract->evaluationAttachments()->get() /*Force refresh*/ as $attachment) {
             // Only process if attachment is in temporary storage
             if (str_contains($attachment->storage_path, 'pending')) {
                 // Get file extension from original path
@@ -719,8 +729,15 @@ class ContractController extends Controller
                 // Get encrypted content from temporary location
                 $encryptedContent = uploadDisk()->get($attachment->storage_path);
 
+                // Vérifier que le contenu existe
+                if ($encryptedContent === null) {
+                    \Log::debug('File not found or unreadable, it has probably already been moved', [
+                        'storage_path' => $attachment->storage_path,
+                        'attachment_id' => $attachment->id
+                    ]);
+                }
                 // Store in final location
-                if (uploadDisk()->put($finalPath, $encryptedContent)) {
+                else if (uploadDisk()->put($finalPath, $encryptedContent)) {
                     // Delete temporary file last (after updating path)
                     $tempPath = $attachment->storage_path;
 
@@ -730,6 +747,11 @@ class ContractController extends Controller
 
                     // Delete temporary file
                     uploadDisk()->delete($tempPath);
+
+                    \Log::debug('File moved', [
+                        'source' => $tempPath,
+                        'destination' => $finalPath
+                    ]);
                 }
             }
         }
